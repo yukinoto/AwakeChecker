@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AwakeChecker</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <p class="eyebrow">本机在线</p>
+      <h1>AwakeChecker</h1>
+    </div>
+    <div id="pill" class="pill">读取中</div>
+  </header>
+  <nav class="tabs" role="tablist">
+    <button type="button" class="tab is-on" data-tab="now">现在</button>
+    <button type="button" class="tab" data-tab="policy">策略</button>
+    <button type="button" class="tab" data-tab="history">记录</button>
+    <button type="button" class="tab" data-tab="access">接入</button>
+  </nav>
+  <main>
+    <section id="now" class="panel">
+      <p id="headline" class="headline">—</p>
+      <dl class="facts">
+        <div><dt>空闲</dt><dd id="idle">—</dd></div>
+        <div><dt>本段开始</dt><dd id="since">—</dd></div>
+        <div><dt>今天在线</dt><dd id="today">—</dd></div>
+        <div><dt>锁屏</dt><dd id="locked">—</dd></div>
+      </dl>
+    </section>
+    <section id="policy" class="panel" hidden>
+      <form id="policy-form" class="stack">
+        <label>空闲超过多少秒算离开
+          <input id="idle-threshold" name="idle_threshold_secs" type="number" min="10" max="86400" required>
+        </label>
+        <label class="check">
+          <input id="locked-offline" name="locked_is_offline" type="checkbox">
+          锁屏立即算离开
+        </label>
+        <label>回到电脑后，连续多少秒才算在线
+          <input id="confirm-secs" name="online_confirm_secs" type="number" min="0" max="3600" required>
+        </label>
+        <div class="row">
+          <button type="submit">保存策略</button>
+          <span id="policy-note" class="note"></span>
+        </div>
+      </form>
+    </section>
+    <section id="history" class="panel" hidden>
+      <form id="history-form" class="row">
+        <label>从 <input id="from-date" type="date" required></label>
+        <label>到 <input id="to-date" type="date" required></label>
+        <button type="submit">查看</button>
+      </form>
+      <p id="history-total" class="note"></p>
+      <ul id="history-list" class="list"></ul>
+    </section>
+    <section id="access" class="panel" hidden>
+      <form id="client-form" class="stack">
+        <label>名称
+          <input id="client-name" maxlength="40" required placeholder="例如 Cursor">
+        </label>
+        <fieldset>
+          <legend>这个客户端能看到</legend>
+          <label class="check"><input type="checkbox" name="scope" value="status" checked> 是否在线</label>
+          <label class="check"><input type="checkbox" name="scope" value="since"> 当前这段从何时开始</label>
+          <label class="check"><input type="checkbox" name="scope" value="idle"> 空闲了多久、是否锁屏</label>
+          <label class="check"><input type="checkbox" name="scope" value="history"> 历史时段明细</label>
+          <label class="check"><input type="checkbox" name="scope" value="summary"> 在线总时长</label>
+        </fieldset>
+        <button type="submit">创建客户端</button>
+      </form>
+      <div id="token-box" class="token" hidden>
+        <p>Token 只显示这一次。放到 Cursor 的 MCP 配置里：</p>
+        <textarea id="token-config" readonly></textarea>
+        <button type="button" id="copy-token">复制配置</button>
+      </div>
+      <div id="clients" class="clients"></div>
+      <h2>查询记录</h2>
+      <label>客户端
+        <select id="query-client"><option value="">全部</option></select>
+      </label>
+      <ul id="query-list" class="list"></ul>
+    </section>
+    <p id="error" class="error" hidden></p>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
