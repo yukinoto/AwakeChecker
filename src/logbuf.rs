@@ -35,12 +35,16 @@ pub fn init(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn path() -> Option<PathBuf> {
     HUB.get().map(|hub| hub.path.clone())
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn attach_console() -> io::Result<()> {
-    let hub = HUB.get().ok_or_else(|| io::Error::other("日志还没初始化"))?;
+    let hub = HUB
+        .get()
+        .ok_or_else(|| io::Error::other("日志还没初始化"))?;
     let console = OpenOptions::new().write(true).open("CONOUT$")?;
     *hub.console.lock().unwrap_or_else(|err| err.into_inner()) = Some(console);
     Ok(())
@@ -74,7 +78,11 @@ impl Write for HubWrite {
 impl Hub {
     fn append(&self, buf: &[u8]) {
         let _write = self.write.lock().unwrap_or_else(|err| err.into_inner());
-        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&self.path) {
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+        {
             let _ = file.write_all(buf);
             let _ = file.flush();
             if file.metadata().map(|meta| meta.len()).unwrap_or(0) > MAX_BYTES {
@@ -104,3 +112,50 @@ fn rotate(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "awake-log-{label}-{}-{}.log",
+            std::process::id(),
+            crate::model::now_ms()
+        ))
+    }
+
+    #[test]
+    fn path_is_empty_until_init_and_append_mirrors_then_rotates() {
+        assert!(path().is_none());
+        let path = temp_path("mirror");
+        let mirror = temp_path("console");
+        let hub = Hub {
+            path: path.clone(),
+            write: Mutex::new(()),
+            console: Mutex::new(Some(File::create(&mirror).unwrap())),
+        };
+        hub.append(b"hello\n");
+        assert_eq!(fs::read(&path).unwrap(), b"hello\n");
+        assert_eq!(fs::read(&mirror).unwrap(), b"hello\n");
+
+        let big = temp_path("rotate");
+        let mut file = File::create(&big).unwrap();
+        let line = b"0123456789abcdef\n";
+        let mut total = 0usize;
+        while total <= MAX_BYTES as usize {
+            file.write_all(line).unwrap();
+            total += line.len();
+        }
+        drop(file);
+        let original = fs::read(&big).unwrap();
+        rotate(&big).unwrap();
+        let kept = fs::read(&big).unwrap();
+        assert!(!kept.is_empty());
+        assert!(kept.len() <= KEEP_BYTES as usize);
+        assert_eq!(*kept.first().unwrap(), b'0');
+        assert!(original.ends_with(&kept));
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(mirror);
+        let _ = fs::remove_file(big);
+    }
+}

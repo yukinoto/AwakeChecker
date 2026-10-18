@@ -1,0 +1,9 @@
+#!/bin/sh
+# Reject unformatted Rust. Install with:
+#   git config core.hooksPath .githooks
+set -eu
+
+if ! cargo fmt --all -- --check; then
+    echo "代码格式和 rustfmt 不一致，请先运行 cargo fmt" >&2
+    exit 1
+fi

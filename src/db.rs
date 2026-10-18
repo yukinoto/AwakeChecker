@@ -20,7 +20,8 @@ pub struct Db {
 impl Db {
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         ensure_parent(path)?;
-        let conn = Connection::open(path).with_context(|| format!("无法打开 {}", path.display()))?;
+        let conn =
+            Connection::open(path).with_context(|| format!("无法打开 {}", path.display()))?;
         conn.execute_batch(
             "
             PRAGMA journal_mode=WAL;
@@ -206,8 +207,7 @@ impl Db {
              ORDER BY started_at ASC, id ASC",
         )?;
         let rows = stmt.query_map(params![from_ms, to_ms], map_segment)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .context("读取时段失败")
+        rows.collect::<Result<Vec<_>, _>>().context("读取时段失败")
     }
 
     pub fn create_client(
@@ -450,8 +450,15 @@ mod tests {
             .unwrap();
         db.create_client("c1", "agent", "hash", &[Scope::Summary], 1_000)
             .unwrap();
-        db.insert_query("c1", "summarize_presence", false, "{}", "denied: history", 2_000)
-            .unwrap();
+        db.insert_query(
+            "c1",
+            "summarize_presence",
+            false,
+            "{}",
+            "denied: history",
+            2_000,
+        )
+        .unwrap();
         drop(db);
 
         let db = Db::open(&path).unwrap();
@@ -477,6 +484,122 @@ mod tests {
         assert!(db.revoke_client("c1", 50).unwrap());
         let client = db.client_by_token_hash("hash2").unwrap().unwrap();
         assert_eq!(client.revoked_at, Some(50));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn knobs_reject_invalid_values_and_keep_the_sample_interval() {
+        let (db, path) = temp_db();
+        let original = db.policy().unwrap();
+        assert_eq!(original.idle_threshold_secs, 180);
+        assert!(original.locked_is_offline);
+        assert_eq!(original.sample_interval_secs, 2);
+        assert!(db.save_knobs(9, false, 0).is_err());
+        assert_eq!(db.policy().unwrap(), original);
+        let saved = db.save_knobs(30, false, 0).unwrap();
+        assert_eq!(saved.idle_threshold_secs, 30);
+        assert!(!saved.locked_is_offline);
+        assert_eq!(saved.online_confirm_secs, 0);
+        assert_eq!(saved.sample_interval_secs, 2);
+        assert!(db.save_knobs(30, true, 3_601).is_err());
+        assert!(!db.policy().unwrap().locked_is_offline);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn closing_and_touching_only_affect_the_open_segment() {
+        let (db, path) = temp_db();
+        let open = db.insert_segment(Presence::Online, 1_000).unwrap();
+        db.touch_segment(open.id, 1_500).unwrap();
+        assert_eq!(db.current_segment().unwrap().unwrap().last_seen_at, 1_500);
+        db.close_segment(open.id, 2_000, EndReason::Locked).unwrap();
+        assert!(db.current_segment().unwrap().is_none());
+        db.touch_segment(open.id, 3_000).unwrap();
+        db.close_segment(open.id, 9_000, EndReason::Idle).unwrap();
+        let rows = db.segments_between(0, 4_000).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].ended_at, Some(2_000));
+        assert_eq!(rows[0].end_reason, Some(EndReason::Locked));
+        assert_eq!(rows[0].last_seen_at, 2_000);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn segment_query_excludes_a_segment_that_ended_at_the_start() {
+        let (db, path) = temp_db();
+        db.insert_segment(Presence::Online, 0).unwrap();
+        db.transition(Presence::Offline, 1_000, EndReason::Idle)
+            .unwrap();
+        let rows = db.segments_between(1_000, 2_000).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].state, Presence::Offline);
+        assert!(rows[0].ended_at.is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn client_updates_stop_after_revoke_and_unknown_scopes_are_dropped() {
+        let (db, path) = temp_db();
+        assert!(
+            db.update_client("missing", Some("x"), None)
+                .unwrap()
+                .is_none()
+        );
+        db.create_client("c1", "agent", "hash3", &[Scope::Status], 10)
+            .unwrap();
+        assert!(
+            db.create_client("c2", "other", "hash3", &[Scope::Summary], 11)
+                .is_err()
+        );
+        let updated = db
+            .update_client(
+                "c1",
+                Some("renamed"),
+                Some(&[Scope::Summary, Scope::History]),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.name, "renamed");
+        assert_eq!(updated.scopes, vec![Scope::Summary, Scope::History]);
+        let stored = db.list_clients().unwrap();
+        assert_eq!(stored[0].scopes, vec![Scope::Summary, Scope::History]);
+        assert!(db.revoke_client("c1", 20).unwrap());
+        assert!(!db.revoke_client("c1", 30).unwrap());
+        assert!(!db.revoke_client("missing", 30).unwrap());
+        assert!(db.update_client("c1", Some("again"), None).is_err());
+        assert_eq!(
+            decode_scopes(r#"["status","nope","status"]"#),
+            vec![Scope::Status, Scope::Status]
+        );
+        assert!(decode_scopes("not-json").is_empty());
+        assert!(decode_scopes("{}").is_empty());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn query_list_clamps_the_limit_and_filters_by_client() {
+        let (db, path) = temp_db();
+        db.insert_query("a", "get_status", true, "", "online=true", 1)
+            .unwrap();
+        db.insert_query("b", "list_sessions", false, "{}", "denied", 2)
+            .unwrap();
+        db.insert_query("gone", "summarize_presence", true, "", "online_secs=1", 3)
+            .unwrap();
+        assert_eq!(db.list_queries(None, 0).unwrap().len(), 1);
+        assert_eq!(db.list_queries(Some("a"), 10).unwrap().len(), 1);
+        let newest = db.list_queries(None, 2).unwrap();
+        assert_eq!(newest.len(), 2);
+        assert_eq!(newest[0].client_id, "gone");
+        assert_eq!(newest[0].client_name, "");
+        assert!(newest[0].allowed);
+        let many = (0..501)
+            .map(|index| {
+                db.insert_query("a", "get_status", true, "", "ok", 10 + index)
+                    .unwrap();
+            })
+            .count();
+        assert_eq!(many, 501);
+        assert_eq!(db.list_queries(None, u32::MAX).unwrap().len(), 500);
         let _ = std::fs::remove_file(path);
     }
 }

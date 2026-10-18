@@ -287,4 +287,124 @@ mod tests {
         assert_eq!(secs, 4);
         assert_eq!(count, 1);
     }
+
+    #[test]
+    fn overlap_ignores_offline_segments_and_subsecond_slivers() {
+        let segments = vec![
+            Segment {
+                id: 1,
+                state: Presence::Online,
+                started_at: 0,
+                ended_at: Some(1_000),
+                end_reason: Some(EndReason::Idle),
+                last_seen_at: 1_000,
+            },
+            Segment {
+                id: 2,
+                state: Presence::Offline,
+                started_at: 1_000,
+                ended_at: Some(5_000),
+                end_reason: Some(EndReason::Returned),
+                last_seen_at: 5_000,
+            },
+            Segment {
+                id: 3,
+                state: Presence::Online,
+                started_at: 5_000,
+                ended_at: Some(5_400),
+                end_reason: Some(EndReason::Locked),
+                last_seen_at: 5_400,
+            },
+        ];
+        let (secs, count) = overlap_online(&segments, 500, 2_000, 9_000);
+        assert_eq!(secs, 0);
+        assert_eq!(count, 1);
+        let (secs, count) = overlap_online(&segments, 10_000, 20_000, 20_000);
+        assert_eq!((secs, count), (0, 0));
+    }
+
+    #[test]
+    fn presence_and_reasons_round_trip() {
+        assert_eq!(Presence::Online.as_str(), "online");
+        assert_eq!(Presence::parse("offline"), Some(Presence::Offline));
+        assert_eq!(Presence::parse("Online"), None);
+        for reason in [
+            EndReason::Idle,
+            EndReason::Locked,
+            EndReason::Policy,
+            EndReason::Stopped,
+            EndReason::Returned,
+        ] {
+            assert_eq!(EndReason::parse(reason.as_str()), Some(reason));
+        }
+        assert_eq!(EndReason::parse("asleep"), None);
+    }
+
+    #[test]
+    fn scope_list_rejects_unknown_and_drops_duplicates() {
+        let scopes = Scope::parse_list(&[
+            "history".to_string(),
+            "status".to_string(),
+            "status".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(scopes, vec![Scope::History, Scope::Status]);
+        assert!(Scope::parse_list(&["nope".to_string()]).is_err());
+        assert!(Scope::parse_list(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn policy_knobs_stay_inside_the_documented_limits() {
+        assert!(Policy::validate_knobs(10, 0).is_ok());
+        assert!(Policy::validate_knobs(86_400, 3_600).is_ok());
+        assert!(Policy::validate_knobs(9, 0).unwrap_err().contains("空闲"));
+        assert!(Policy::validate_knobs(86_401, 0).is_err());
+        assert!(
+            Policy::validate_knobs(10, 3_601)
+                .unwrap_err()
+                .contains("1 小时")
+        );
+    }
+
+    #[test]
+    fn names_are_trimmed_and_reject_control_characters() {
+        assert_eq!(validate_name("  座位  ").unwrap(), "座位");
+        assert!(validate_name("   ").is_err());
+        assert!(validate_name("a\u{0001}b").is_err());
+        let ok = "测".repeat(40);
+        assert_eq!(validate_name(&ok).unwrap(), ok);
+        assert!(validate_name(&"测".repeat(41)).is_err());
+    }
+
+    #[test]
+    fn clip_text_counts_characters() {
+        assert_eq!(clip_text("abc", 3), "abc");
+        assert_eq!(clip_text("abcd", 3), "abc…");
+        assert_eq!(clip_text("你好世界", 2), "你好…");
+        assert_eq!(clip_text("a", 0), "…");
+    }
+
+    #[test]
+    fn range_bounds_accept_rfc3339_and_reject_garbage() {
+        let ms = parse_range_bound("  2026-01-01T00:00:00Z ", false).unwrap();
+        assert_eq!(
+            ms,
+            DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+                .unwrap()
+                .timestamp_millis()
+        );
+        assert!(parse_range_bound("2026-13-40", false).is_err());
+        assert!(parse_range_bound("nope", true).is_err());
+        let formatted = format_rfc3339(1_700_000_000_000);
+        assert_eq!(
+            DateTime::parse_from_rfc3339(&formatted)
+                .unwrap()
+                .timestamp_millis(),
+            1_700_000_000_000
+        );
+        assert_eq!(format_rfc3339(i64::MAX), "");
+        let now = 1_700_000_000_000;
+        assert_eq!(default_range(now).1, now);
+        assert_eq!(default_range(now).0, start_of_today_ms());
+    }
 }

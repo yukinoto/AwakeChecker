@@ -13,7 +13,9 @@ use crate::http::AppState;
 
 pub use auth::{issue_token, new_id, require_client};
 
-pub fn http_service(app: AppState) -> StreamableHttpService<server::AwakeServer, LocalSessionManager> {
+pub fn http_service(
+    app: AppState,
+) -> StreamableHttpService<server::AwakeServer, LocalSessionManager> {
     let config = StreamableHttpServerConfig::default()
         .with_legacy_session_mode(false)
         .with_json_response(true);

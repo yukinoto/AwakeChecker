@@ -155,13 +155,9 @@ pub async fn summary(State(state): State<AppState>, Query(query): Query<RangeQue
 
 pub async fn list_clients(State(state): State<AppState>) -> Response {
     match state.db.list_clients() {
-        Ok(clients) => Json(
-            clients
-                .into_iter()
-                .map(client_body)
-                .collect::<Vec<_>>(),
-        )
-        .into_response(),
+        Ok(clients) => {
+            Json(clients.into_iter().map(client_body).collect::<Vec<_>>()).into_response()
+        }
         Err(err) => fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()),
     }
 }
