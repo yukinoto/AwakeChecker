@@ -4,7 +4,7 @@ use windows::{
     Win32::{
         Foundation::CloseHandle,
         System::Threading::{
-            CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS, CreateProcessW,
+            CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CreateProcessW, DETACHED_PROCESS,
             PROCESS_INFORMATION, STARTUPINFOW,
         },
     },

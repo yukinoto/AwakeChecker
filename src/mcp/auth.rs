@@ -1,4 +1,3 @@
-
 use axum::{
     body::Body,
     extract::State,
@@ -74,7 +73,11 @@ fn bearer(value: Option<&axum::http::HeaderValue>) -> Option<String> {
         .strip_prefix("Bearer ")
         .or_else(|| raw.strip_prefix("bearer "))?;
     let token = token.trim();
-    if token.is_empty() { None } else { Some(token.to_string()) }
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_string())
+    }
 }
 
 fn unauthorized() -> Response {
@@ -91,7 +94,8 @@ fn base64url(bytes: &[u8]) -> String {
     let mut out = String::new();
     let mut i = 0;
     while i + 3 <= bytes.len() {
-        let n = (u32::from(bytes[i]) << 16) | (u32::from(bytes[i + 1]) << 8) | u32::from(bytes[i + 2]);
+        let n =
+            (u32::from(bytes[i]) << 16) | (u32::from(bytes[i + 1]) << 8) | u32::from(bytes[i + 2]);
         out.push(TABLE[((n >> 18) & 63) as usize] as char);
         out.push(TABLE[((n >> 12) & 63) as usize] as char);
         out.push(TABLE[((n >> 6) & 63) as usize] as char);
@@ -122,3 +126,30 @@ fn hex(bytes: &[u8]) -> String {
     out
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_hash_is_sha256_hex_and_tokens_are_url_safe() {
+        assert_eq!(
+            token_hash("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let (token, hash) = issue_token().unwrap();
+        assert!(token.starts_with("awk_"));
+        assert_eq!(token.len(), 4 + 43);
+        assert!(
+            token[4..]
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        );
+        assert_eq!(hash, token_hash(&token));
+        let (other, _) = issue_token().unwrap();
+        assert_ne!(token, other);
+        let id = new_id().unwrap();
+        assert_eq!(id.len(), 32);
+        assert!(id.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert_ne!(id, new_id().unwrap());
+    }
+}

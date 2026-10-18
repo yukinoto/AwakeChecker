@@ -13,10 +13,10 @@ use windows::{
                 Shell_NotifyIconW,
             },
             WindowsAndMessaging::{
-                AppendMenuW, CreatePopupMenu,                 CreateWindowExW, DefWindowProcW, DestroyMenu,
+                AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
                 DispatchMessageW, GetCursorPos, GetMessageW, HICON, HWND_MESSAGE, IMAGE_ICON,
-                LR_DEFAULTSIZE, LR_LOADFROMFILE, LoadImageW, MF_STRING, PostMessageW, PostQuitMessage,
-                RegisterClassW, SetForegroundWindow, SetTimer, TPM_BOTTOMALIGN,
+                LR_DEFAULTSIZE, LR_LOADFROMFILE, LoadImageW, MF_STRING, PostMessageW,
+                PostQuitMessage, RegisterClassW, SetForegroundWindow, SetTimer, TPM_BOTTOMALIGN,
                 TPM_RIGHTALIGN, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WM_COMMAND,
                 WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WM_TIMER,
                 WM_USER, WNDCLASSW, WS_OVERLAPPEDWINDOW,
@@ -111,7 +111,10 @@ unsafe fn setup(icon_path: &Path, url: &str) -> windows::core::Result<()> {
     }
 }
 
-unsafe fn notify(tray: &Tray, message: windows::Win32::UI::Shell::NOTIFY_ICON_MESSAGE) -> windows::core::Result<()> {
+unsafe fn notify(
+    tray: &Tray,
+    message: windows::Win32::UI::Shell::NOTIFY_ICON_MESSAGE,
+) -> windows::core::Result<()> {
     unsafe {
         let mut data = NOTIFYICONDATAW {
             cbSize: u32::try_from(std::mem::size_of::<NOTIFYICONDATAW>()).unwrap_or(0),

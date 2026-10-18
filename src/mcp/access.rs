@@ -101,14 +101,20 @@ pub fn result_summary(value: &Value) -> String {
             .unwrap_or_default();
         return format!(
             "online={} visible={visible}",
-            value.get("online").and_then(Value::as_bool).unwrap_or(false)
+            value
+                .get("online")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
         );
     }
     if let Some(count) = value.get("count").and_then(Value::as_u64) {
         return format!("sessions={count}");
     }
     if let Some(secs) = value.get("online_secs").and_then(Value::as_i64) {
-        let segments = value.get("segment_count").and_then(Value::as_u64).unwrap_or(0);
+        let segments = value
+            .get("segment_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
         return format!("online_secs={secs} segments={segments}");
     }
     clip_text(&value.to_string(), 180)
@@ -157,5 +163,64 @@ mod tests {
         let summary = project_summary(&sessions, 0, 10_000, 10_000);
         assert_eq!(summary["online_secs"], json!(5));
         assert!(summary.get("sessions").is_none());
+    }
+
+    #[test]
+    fn field_scopes_do_not_grant_tools_and_status_can_include_idle() {
+        assert!(!tool_allowed(
+            &[Scope::Status, Scope::History, Scope::Summary],
+            "drop_table"
+        ));
+        assert!(!tool_allowed(&[Scope::Since, Scope::Idle], TOOL_STATUS));
+        assert_eq!(
+            visible_names(&[Scope::Idle, Scope::Status, Scope::Since]),
+            vec!["status", "since", "idle"]
+        );
+        let snapshot = LiveSnapshot {
+            online: false,
+            idle_secs: 9,
+            locked: true,
+            since_ms: 1_700_000_000_000,
+        };
+        let value = project_status(&snapshot, &[Scope::Status, Scope::Since, Scope::Idle]).unwrap();
+        assert_eq!(value["online"], json!(false));
+        assert!(value["since"].as_str().unwrap().contains('T'));
+        assert_eq!(value["idle_secs"], json!(9));
+        assert_eq!(value["locked"], json!(true));
+    }
+
+    #[test]
+    fn session_projection_respects_the_limit() {
+        let segment = Segment {
+            id: 1,
+            state: Presence::Online,
+            started_at: 0,
+            ended_at: Some(5_000),
+            end_reason: Some(EndReason::Idle),
+            last_seen_at: 5_000,
+        };
+        let value = project_sessions(&[segment.clone(), segment], 1);
+        assert_eq!(value["count"], json!(1));
+        assert_eq!(value["sessions"][0]["state"], json!("online"));
+        assert_eq!(value["sessions"][0]["end_reason"], json!("idle"));
+    }
+
+    #[test]
+    fn argument_and_result_summaries_are_clipped() {
+        assert_eq!(args_summary(None), "");
+        assert_eq!(args_summary(Some(&serde_json::Map::new())), "");
+        let mut arguments = serde_json::Map::new();
+        arguments.insert("from".into(), json!("x".repeat(300)));
+        let clipped = args_summary(Some(&arguments));
+        assert!(clipped.ends_with('…'));
+        assert!(clipped.chars().count() <= 181);
+        assert_eq!(result_summary(&json!({"count": 2})), "sessions=2");
+        assert_eq!(
+            result_summary(&json!({"online_secs": 9, "segment_count": 3})),
+            "online_secs=9 segments=3"
+        );
+        let fallback = result_summary(&json!({"other": "y".repeat(400)}));
+        assert!(fallback.ends_with('…'));
+        assert!(fallback.chars().count() <= 181);
     }
 }

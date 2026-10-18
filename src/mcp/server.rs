@@ -62,14 +62,7 @@ impl AwakeServer {
     fn audit(&self, tool: &str, allowed: bool, args: &str, result: &str) -> Result<(), String> {
         self.app
             .db
-            .insert_query(
-                &self.client.id,
-                tool,
-                allowed,
-                args,
-                result,
-                now_ms(),
-            )
+            .insert_query(&self.client.id, tool, allowed, args, result, now_ms())
             .map_err(|err| {
                 tracing::error!(error = %err, "写入 MCP 查询记录失败");
                 "查询记录写入失败".to_string()
@@ -243,4 +236,119 @@ fn schema(properties: Value) -> Arc<rmcp::model::JsonObject> {
         "additionalProperties": false
     });
     Arc::new(value.as_object().cloned().unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Map, json};
+
+    use super::*;
+    use crate::{
+        db::Db,
+        http::AppState,
+        live::{Live, LiveSnapshot},
+        mcp::auth::ClientAuth,
+        model::{EndReason, Presence, Scope},
+    };
+
+    fn harness(scopes: &[Scope]) -> (AwakeServer, Db, std::path::PathBuf) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("awake-mcp-{}-{n}.db", std::process::id()));
+        let db = Db::open(&path).unwrap();
+        let server = AwakeServer::new(
+            AppState {
+                db: db.clone(),
+                live: Live::default(),
+            },
+            ClientAuth {
+                id: "c1".into(),
+                name: "agent".into(),
+                scopes: scopes.to_vec(),
+            },
+        );
+        (server, db, path)
+    }
+
+    #[test]
+    fn tools_follow_scopes_and_are_marked_read_only() {
+        let (server, _, empty_path) = harness(&[Scope::Since, Scope::Idle]);
+        assert!(server.tools().is_empty());
+        drop(server);
+        let _ = std::fs::remove_file(empty_path);
+        let (server, _, path) = harness(&[Scope::Status, Scope::History, Scope::Summary]);
+        let names: Vec<_> = server
+            .tools()
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "get_status".to_string(),
+                "list_sessions".to_string(),
+                "summarize_presence".to_string()
+            ]
+        );
+        let annotations = server.tools()[0].annotations.clone().unwrap();
+        assert_eq!(annotations.read_only_hint, Some(true));
+        assert_eq!(annotations.destructive_hint, Some(false));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn calls_honor_scope_and_clip_session_lists() {
+        let (server, db, path) = harness(&[Scope::Status, Scope::Since, Scope::Idle]);
+        server.app.live.publish(LiveSnapshot {
+            online: true,
+            idle_secs: 3,
+            locked: true,
+            since_ms: 1_700_000_000_000,
+        });
+        let status = server.call_status().unwrap();
+        assert_eq!(status["online"], json!(true));
+        assert_eq!(status["idle_secs"], json!(3));
+        assert!(status["since"].as_str().unwrap().contains('T'));
+        assert!(server.call_sessions(&Map::new()).is_err());
+        assert!(server.call_summary(&Map::new()).is_err());
+
+        db.insert_segment(Presence::Online, 0).unwrap();
+        db.transition(Presence::Offline, 5_000, EndReason::Idle)
+            .unwrap();
+        let history = AwakeServer::new(
+            server.app.clone(),
+            ClientAuth {
+                id: "c1".into(),
+                name: "agent".into(),
+                scopes: vec![Scope::History, Scope::Summary],
+            },
+        );
+        assert!(history.call_status().is_err());
+        let mut arguments = Map::new();
+        arguments.insert("from".into(), json!("1970-01-01T00:00:00Z"));
+        arguments.insert("to".into(), json!("1970-01-01T00:00:10Z"));
+        arguments.insert("limit".into(), json!(0));
+        let sessions = history.call_sessions(&arguments).unwrap();
+        assert_eq!(sessions["count"], json!(1));
+        let summary = history.call_summary(&arguments).unwrap();
+        assert_eq!(summary["online_secs"], json!(5));
+        assert!(summary.get("sessions").is_none());
+
+        arguments.insert("from".into(), json!("2026-02-02T00:00:02Z"));
+        arguments.insert("to".into(), json!("2026-02-02T00:00:01Z"));
+        assert!(
+            history
+                .call_sessions(&arguments)
+                .unwrap_err()
+                .contains("结束时间")
+        );
+        arguments.insert("from".into(), json!("not-a-date"));
+        assert!(history.call_summary(&arguments).is_err());
+        arguments.clear();
+        arguments.insert("from".into(), json!("  "));
+        arguments.insert("to".into(), json!(""));
+        assert!(history.call_summary(&arguments).is_ok());
+        let _ = std::fs::remove_file(path);
+    }
 }

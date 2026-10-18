@@ -19,6 +19,9 @@ use crate::{
 };
 
 pub fn run() -> anyhow::Result<()> {
+    if !cfg!(windows) {
+        anyhow::bail!("AwakeChecker 只在 Windows 上运行");
+    }
     match win::launch() {
         Launch::ParentExited => Ok(()),
         Launch::Run { foreground } => start(foreground),
@@ -96,5 +99,17 @@ fn start(foreground: bool) -> anyhow::Result<()> {
             tracing::error!("退出时后台任务没有在 8 秒内结束");
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn run_refuses_to_start_off_windows() {
+        if cfg!(windows) {
+            return;
+        }
+        let err = super::run().unwrap_err().to_string();
+        assert!(err.contains("只在 Windows 上运行"), "{err}");
     }
 }

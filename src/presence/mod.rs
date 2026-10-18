@@ -84,12 +84,7 @@ fn bootstrap(db: &Db, live: &Live) -> anyhow::Result<Engine> {
     Ok(Engine::new(segment.state))
 }
 
-fn tick(
-    db: &Db,
-    live: &Live,
-    engine: &mut Engine,
-    last_policy: &mut Policy,
-) -> anyhow::Result<()> {
+fn tick(db: &Db, live: &Live, engine: &mut Engine, last_policy: &mut Policy) -> anyhow::Result<()> {
     let policy = db.policy()?;
     let (idle_secs, locked) = windows::sample_activity()?;
     let obs = Observation {
@@ -130,5 +125,104 @@ fn end_reason(
         EndReason::Locked
     } else {
         EndReason::Idle
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_db() -> (Db, std::path::PathBuf) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("awake-presence-{}-{n}.db", std::process::id()));
+        (Db::open(&path).unwrap(), path)
+    }
+
+    #[test]
+    fn end_reason_prefers_return_then_policy_then_lock() {
+        let policy = Policy::default();
+        let locked = Observation {
+            at_ms: 0,
+            idle_secs: 1,
+            locked: true,
+        };
+        assert_eq!(
+            end_reason(Presence::Offline, &locked, &policy, true),
+            EndReason::Returned
+        );
+        assert_eq!(
+            end_reason(Presence::Online, &locked, &policy, true),
+            EndReason::Policy
+        );
+        assert_eq!(
+            end_reason(Presence::Online, &locked, &policy, false),
+            EndReason::Locked
+        );
+        let idle = Observation {
+            at_ms: 0,
+            idle_secs: 999,
+            locked: false,
+        };
+        assert_eq!(
+            end_reason(Presence::Online, &idle, &policy, false),
+            EndReason::Idle
+        );
+        let ignore_lock = Policy {
+            locked_is_offline: false,
+            ..Policy::default()
+        };
+        assert_eq!(
+            end_reason(Presence::Online, &locked, &ignore_lock, false),
+            EndReason::Idle
+        );
+    }
+
+    #[test]
+    fn finish_closes_only_an_open_segment() {
+        let (db, path) = temp_db();
+        finish(&db).unwrap();
+        assert!(db.current_segment().unwrap().is_none());
+        db.insert_segment(Presence::Online, 1_000).unwrap();
+        finish(&db).unwrap();
+        let rows = db.segments_between(0, i64::MAX).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].end_reason, Some(EndReason::Stopped));
+        assert!(rows[0].ended_at.unwrap() >= 1_000);
+        assert!(db.current_segment().unwrap().is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn bootstrap_truncates_a_stale_segment_and_keeps_a_fresh_one() {
+        let (db, path) = temp_db();
+        let stale = db.insert_segment(Presence::Online, 1_000).unwrap();
+        db.touch_segment(stale.id, 1_000).unwrap();
+        let live = Live::default();
+        let stale_result = bootstrap(&db, &live);
+        let closed = db.segments_between(0, i64::MAX).unwrap();
+        let closed = closed.iter().find(|row| row.id == stale.id).unwrap();
+        assert_eq!(closed.end_reason, Some(EndReason::Stopped));
+        assert_eq!(closed.ended_at, Some(1_000));
+        if !cfg!(windows) {
+            assert!(stale_result.unwrap_err().to_string().contains("Windows"));
+            let fresh = db.insert_segment(Presence::Offline, now_ms()).unwrap();
+            let fresh_result = bootstrap(&db, &live);
+            let current = db.current_segment().unwrap().unwrap();
+            assert_eq!(current.id, fresh.id);
+            assert!(current.ended_at.is_none());
+            assert!(fresh_result.unwrap_err().to_string().contains("Windows"));
+            let mut engine = Engine::new(Presence::Offline);
+            let mut policy = db.policy().unwrap();
+            assert!(
+                tick(&db, &live, &mut engine, &mut policy)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Windows")
+            );
+        }
+        let _ = std::fs::remove_file(path);
     }
 }

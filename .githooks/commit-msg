@@ -1,0 +1,57 @@
+#!/bin/sh
+# Lightweight Conventional Commits check. Install with:
+#   git config core.hooksPath .githooks
+set -eu
+
+file=$1
+cleaned=$(mktemp)
+sed '/^#/d' "$file" > "$cleaned"
+first=$(awk 'NF { print; exit }' "$cleaned")
+if [ -z "$first" ]; then
+    echo "提交说明不能为空" >&2
+    rm -f "$cleaned"
+    exit 1
+fi
+
+case $first in
+    "Merge "*|"Revert "*)
+        rm -f "$cleaned"
+        exit 0
+        ;;
+esac
+
+if ! printf '%s\n' "$first" | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert)(\([A-Za-z0-9._/-]+\))?(!)?: [^ ].+'; then
+    echo "提交说明需要 Conventional Commits：<type>[scope]: 标题" >&2
+    echo "type: feat fix docs style refactor perf test chore build ci revert" >&2
+    rm -f "$cleaned"
+    exit 1
+fi
+
+case $first in
+    *.)
+        echo "提交标题不要以句号结尾" >&2
+        rm -f "$cleaned"
+        exit 1
+        ;;
+esac
+
+if ! awk '
+    BEGIN { started = 0; bad = 0 }
+    {
+        if (!started) {
+            if ($0 ~ /^[[:space:]]*$/) next
+            started = 1
+            next
+        }
+        if ($0 ~ /^[[:space:]]*$/) { exit 0 }
+        bad = 1
+        exit 1
+    }
+    END { exit bad }
+' "$cleaned"; then
+    echo "标题和正文之间要空一行" >&2
+    rm -f "$cleaned"
+    exit 1
+fi
+
+rm -f "$cleaned"

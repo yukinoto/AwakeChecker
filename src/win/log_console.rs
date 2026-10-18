@@ -4,11 +4,7 @@ use std::{
     sync::Mutex,
 };
 
-use windows::{
-    Win32::System::Console::{
-        ATTACH_PARENT_PROCESS, AttachConsole, SetConsoleOutputCP,
-    },
-};
+use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, SetConsoleOutputCP};
 
 const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;

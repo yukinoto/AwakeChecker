@@ -54,3 +54,25 @@ Cursor 配置示例：
 ```
 
 工具：`get_status`、`list_sessions`、`summarize_presence`。没有对应范围的工具不会出现；硬调用会记一条拒绝记录。
+
+## 开发
+
+Rust 2024。格式用 rustfmt（`rustfmt.toml`），检查用 Clippy，编辑器缩进跟 `.editorconfig`。不要再引入第二套格式化或 lint 工具。
+
+```text
+cargo fmt
+cargo lint
+cargo test
+```
+
+`cargo lint` 是 `cargo clippy --all-targets -- -D warnings`。键鼠采样和托盘只在 Windows 上编译；数据库、策略、HTTP 和 MCP 在其他系统上也可以跑 `cargo test`。
+
+提交用 [Conventional Commits](https://www.conventionalcommits.org/)。第一行是 `<type>[scope]: 标题`，标题用祈使句，不加句号，尽量不超过 100 个字符。正文跟标题之间空一行。`type` 用 `feat`、`fix`、`docs`、`style`、`refactor`、`perf`、`test`、`chore`、`build`、`ci`、`revert`。
+
+分支从默认分支拉出，用 `<type>/<短横线说明>`，例如 `test/http-policy`。
+
+本地可选钩子（检查提交说明，并在提交前跑 `cargo fmt --check`）：
+
+```text
+git config core.hooksPath .githooks
+```
